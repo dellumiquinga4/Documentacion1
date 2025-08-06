@@ -1,10 +1,14 @@
 package com.banquito.Documentacion.service;
 
-
+import com.banquito.Documentacion.client.CoreBancarioClient;
+import com.banquito.Documentacion.client.ClientesClient;
+import com.banquito.Documentacion.client.PrestamoClient;
+import com.banquito.Documentacion.client.OriginacionClient;
+import com.banquito.Documentacion.dto.ClienteDTO;
+import com.banquito.Documentacion.dto.CrearPrestamoRequest;
+import com.banquito.Documentacion.dto.DetalleSolicitudResponseDTO;
 import com.banquito.Documentacion.dto.DocumentoAdjuntoDTO;
 import com.banquito.Documentacion.dto.DocumentoAdjuntoResponseDTO;
-import com.banquito.Documentacion.client.OriginacionClient;
-import com.banquito.Documentacion.dto.DetalleSolicitudResponseDTO;
 import com.banquito.Documentacion.enums.EstadoDocumentoEnum;
 import com.banquito.Documentacion.enums.TipoDocumentoEnum;
 import com.banquito.Documentacion.exception.CreateEntityException;
@@ -34,7 +38,28 @@ public class DocumentoService {
     private final FileStorageService fileStorageService;
     private final OriginacionClient originacionClient;
 
+    private final CoreBancarioClient coreBancarioClient;
+    private final PrestamoClient prestamoClient;
+    private final ClientesClient clientesClient;
 
+    /** nuevo método: contar cuántos hay */
+    public long countPorSolicitud(String numeroSolicitud) {
+        return documentoAdjuntoRepository.countByNumeroSolicitud(numeroSolicitud);
+    }
+
+    /** usar el mismo feign que ya hiciste */
+    public DetalleSolicitudResponseDTO obtenerDetalleSolicitud(String numeroSolicitud) {
+        return originacionClient.obtenerDetalle(numeroSolicitud);
+    }
+
+    public void notificarDocumentacionCargada(String numeroSolicitud) {
+        DetalleSolicitudResponseDTO det = obtenerDetalleSolicitud(numeroSolicitud);
+        originacionClient.cambiarEstado(
+                det.getIdSolicitud(),
+                "DOCUMENTACION_CARGADA",
+                "Se subieron los 3 documentos",
+                "vendedor");
+    }
 
     public DocumentoAdjuntoResponseDTO cargarDocumento(String numeroSolicitud, MultipartFile archivo,
             String tipoDocumento) {
@@ -72,7 +97,6 @@ public class DocumentoService {
         return documentoAdjuntoMapper.toResponseDTO(saved);
     }
 
-
     public List<DocumentoAdjuntoResponseDTO> listarDocumentos(String numeroSolicitud) {
         List<DocumentoAdjunto> documentos = documentoAdjuntoRepository.findByNumeroSolicitud(numeroSolicitud);
         return documentos.stream()
@@ -80,7 +104,85 @@ public class DocumentoService {
                 .toList();
     }
 
+    public DocumentoAdjuntoResponseDTO validarDocumento(String numeroSolicitud, String idDocumento) {
+        var doc = documentoAdjuntoRepository.findById(idDocumento)
+                .orElseThrow(() -> new ResourceNotFoundException("Documento no encontrado"));
+        if (!doc.getNumeroSolicitud().equals(numeroSolicitud)) {
+            throw new CreateEntityException("DocumentoAdjunto", "No pertenece a la solicitud");
+        }
+        doc.setEstado(EstadoDocumentoEnum.VALIDADO);
+        DocumentoAdjunto saved = documentoAdjuntoRepository.save(doc);
 
+        return documentoAdjuntoMapper.toResponseDTO(saved);
+    }
+
+    public DocumentoAdjuntoResponseDTO rechazarDocumento(
+            String numeroSolicitud,
+            String idDocumento,
+            String observacion) {
+
+        // 1) Recuperar entidad o lanzar 404
+        DocumentoAdjunto doc = documentoAdjuntoRepository.findById(idDocumento)
+                .orElseThrow(() -> new ResourceNotFoundException("Documento no encontrado"));
+
+        // 2) Validar que pertenece a la solicitud
+        if (!doc.getNumeroSolicitud().equals(numeroSolicitud)) {
+            throw new CreateEntityException("DocumentoAdjunto",
+                    "El documento no pertenece a la solicitud especificada");
+        }
+
+        // 3) Actualizar estado y observación
+        doc.setEstado(EstadoDocumentoEnum.RECHAZADO);
+        doc.setObservacion(observacion); // necesitarás un campo `observacion` en tu modelo
+
+        // 4) Guardar cambios
+        DocumentoAdjunto actualizado = documentoAdjuntoRepository.save(doc);
+
+        // 5) Convertir y devolver DTO
+        return documentoAdjuntoMapper.toResponseDTO(actualizado);
+    }
+
+    // Valdiar todos los documentos de una solicitud
+    @Transactional
+    public void validarTodos(String numeroSolicitud, String usuario) {
+        List<DocumentoAdjunto> docs = documentoAdjuntoRepository.findByNumeroSolicitud(numeroSolicitud);
+        // 1) marcar cada uno como VALIDADO
+        docs.forEach(d -> {
+            if (d.getEstado() == EstadoDocumentoEnum.CARGADO) {
+                d.setEstado(EstadoDocumentoEnum.VALIDADO);
+                documentoAdjuntoRepository.save(d);
+            }
+        });
+        // 2) notificar a Originación que ya validó TODOS los documentos
+        DetalleSolicitudResponseDTO det = originacionClient.obtenerDetalle(numeroSolicitud);
+        originacionClient.cambiarEstado(
+                det.getIdSolicitud(),
+                "DOCUMENTACION_VALIDADA",
+                "Se validaron todos los documentos",
+                usuario);
+
+        // a) obtener idCliente
+        coreBancarioClient
+                .consultarPersonaPorIdentificacion("CEDULA", det.getCedulaSolicitante());
+
+        // (3b) Recupera el cliente ya creado en el micro de Clientes
+        List<ClienteDTO> clientes = clientesClient
+                .findByIdentificacion("CEDULA", det.getCedulaSolicitante());
+        if (clientes.isEmpty()) {
+            throw new IllegalStateException("No existe cliente con esta cédula " + det.getCedulaSolicitante());
+        }
+        String idCliente = clientes.get(0).getId();
+
+        // b) construir request
+        CrearPrestamoRequest creq = new CrearPrestamoRequest(
+                idCliente,
+                det.getIdPrestamo(),
+                det.getMontoSolicitado(),
+                det.getPlazoMeses());
+
+        // c) llamas al cliente Feign que expone el POST /prestamos
+        prestamoClient.crearPrestamo(creq);
+    }
 
     public void cargarTodosYMarcar(
             String numeroSolicitud,
@@ -162,8 +264,6 @@ public class DocumentoService {
         documentoAdjuntoRepository.deleteByNumeroSolicitud(numeroSolicitud);
         log.info("Documentos eliminados exitosamente para solicitud: {}", numeroSolicitud);
     }
-
- 
 
 
 }
