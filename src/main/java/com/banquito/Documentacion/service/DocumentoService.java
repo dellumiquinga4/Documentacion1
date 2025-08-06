@@ -289,5 +289,34 @@ public class DocumentoService {
 
     // DocumentoService.java
 
+    @Transactional
+    public void validarTodosContratos(String numeroSolicitud, String usuario) {
+        List<DocumentoAdjunto> docs = documentoAdjuntoRepository.findByNumeroSolicitud(numeroSolicitud).stream()
+                .filter(d -> d.getTipoDocumento().equals("CONTRATO") || d.getTipoDocumento().equals("PAGARES"))
+                .toList();
+
+        boolean anyRejected = docs.stream().anyMatch(d -> d.getEstado() == EstadoDocumentoEnum.RECHAZADO);
+
+        // 1) Validar cada uno que esté CARGADO
+        docs.forEach(d -> {
+            if (d.getEstado() == EstadoDocumentoEnum.CARGADO) {
+                d.setEstado(EstadoDocumentoEnum.VALIDADO);
+            }
+        });
+        documentoAdjuntoRepository.saveAll(docs);
+
+        // 2) Cambiar estado de la SOLICITUD
+        DetalleSolicitudResponseDTO det = originacionClient.obtenerDetalle(numeroSolicitud);
+        String nuevoEstado = anyRejected ? "CONTRATO_RECHAZADO" : "CONTRATO_VALIDADO";
+        String motivo = anyRejected
+                ? "Uno o más contratos fueron rechazados"
+                : "Todos los contratos validados";
+
+        originacionClient.cambiarEstado(
+                det.getIdSolicitud(),
+                nuevoEstado,
+                motivo,
+                usuario);
+    }
 
 }

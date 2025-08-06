@@ -179,6 +179,14 @@ public class DocumentoController {
 
     // DocumentoController.java
 
+    @PatchMapping("/validar-contratos")
+    public ResponseEntity<Void> validarContratos(
+            @PathVariable String numeroSolicitud,
+            @RequestParam String usuario) {
+        documentoService.validarTodosContratos(numeroSolicitud, usuario);
+        return ResponseEntity.ok().build();
+    }
+
     // en DocumentoController.java
     @PatchMapping("/contratos-cargados")
     public ResponseEntity<Void> contratosCargados(
