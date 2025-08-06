@@ -13,8 +13,10 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -55,7 +57,38 @@ public class DocumentoController {
         return ResponseEntity.status(HttpStatus.CREATED).body(dto);
     }
 
+    @Operation(summary = "Descargar documento", description = "Descarga un documento específico de la solicitud")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Documento descargado exitosamente"),
+            @ApiResponse(responseCode = "404", description = "Documento no encontrado", content = @Content)
+    })
+    @GetMapping("/{idDocumento}/descargar")
+    public ResponseEntity<Resource> descargarDocumento(
+            @Parameter(description = "Número de la solicitud", required = true) @PathVariable String numeroSolicitud,
+            @Parameter(description = "ID del documento", required = true) @PathVariable String idDocumento) {
+        log.info("Descargando documento {} de solicitud {}", idDocumento, numeroSolicitud);
+        Resource resource = documentoService.descargarDocumento(numeroSolicitud, idDocumento);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(resource);
+    }
 
+    @Operation(summary = "Ver documento", description = "Visualiza un documento específico de la solicitud en el navegador")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Documento visualizado exitosamente"),
+            @ApiResponse(responseCode = "404", description = "Documento no encontrado", content = @Content)
+    })
+    @GetMapping("/{idDocumento}/ver")
+    public ResponseEntity<Resource> verDocumento(
+            @Parameter(description = "Número de la solicitud", required = true) @PathVariable String numeroSolicitud,
+            @Parameter(description = "ID del documento", required = true) @PathVariable String idDocumento) {
+        log.info("Visualizando documento {} de solicitud {}", idDocumento, numeroSolicitud);
+        Resource resource = documentoService.descargarDocumento(numeroSolicitud, idDocumento);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(resource);
+    }
 
     @Operation(summary = "Listar documentos de solicitud", description = "Obtiene la lista de documentos cargados para una solicitud")
     @ApiResponses({
@@ -144,6 +177,15 @@ public class DocumentoController {
         return ResponseEntity.noContent().build();
     }
 
+    // DocumentoController.java
 
+    // en DocumentoController.java
+    @PatchMapping("/contratos-cargados")
+    public ResponseEntity<Void> contratosCargados(
+            @PathVariable String numeroSolicitud,
+            @RequestParam String usuario) {
+        documentoService.notificarContratoCargado(numeroSolicitud, usuario);
+        return ResponseEntity.ok().build();
+    }
 
 }

@@ -18,6 +18,7 @@ import com.banquito.Documentacion.model.DocumentoAdjunto;
 import com.banquito.Documentacion.repository.DocumentoAdjuntoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -95,6 +96,18 @@ public class DocumentoService {
         DocumentoAdjunto saved = documentoAdjuntoRepository.save(doc);
         log.info("Documento cargado exitosamente: {} para solicitud {}", tipoDocumento, numeroSolicitud);
         return documentoAdjuntoMapper.toResponseDTO(saved);
+    }
+
+    public Resource descargarDocumento(String numeroSolicitud, String idDocumento) {
+        DocumentoAdjunto documento = documentoAdjuntoRepository.findById(idDocumento)
+                .orElseThrow(() -> new ResourceNotFoundException("Documento no encontrado"));
+
+        if (!documento.getNumeroSolicitud().equals(numeroSolicitud)) {
+            throw new CreateEntityException("DocumentoAdjunto",
+                    "El documento no pertenece a la solicitud especificada");
+        }
+
+        return fileStorageService.loadFileAsResource(documento.getRutaStorage());
     }
 
     public List<DocumentoAdjuntoResponseDTO> listarDocumentos(String numeroSolicitud) {
@@ -264,6 +277,17 @@ public class DocumentoService {
         documentoAdjuntoRepository.deleteByNumeroSolicitud(numeroSolicitud);
         log.info("Documentos eliminados exitosamente para solicitud: {}", numeroSolicitud);
     }
+
+    public void notificarContratoCargado(String numeroSolicitud, String usuario) {
+        DetalleSolicitudResponseDTO det = originacionClient.obtenerDetalle(numeroSolicitud);
+        originacionClient.cambiarEstado(
+                det.getIdSolicitud(),
+                "CONTRATO_CARGADO",
+                "Se subieron contrato y pagaré",
+                usuario);
+    }
+
+    // DocumentoService.java
 
 
 }
